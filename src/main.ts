@@ -18,10 +18,10 @@ const has:      typeof cl.has      = cl.has;
 
 export type ProcOpts = {
   cwd?: DiskFact,
-  timeoutMs?: number,
+  timeoutMs?: number, // Omit, or set to `0` or `Infinity` to disable timeout entirely
   bufferOutput?: boolean,
   env?: Obj<string> | NodeJS.ProcessEnv,
-  args?: Obj<string>,
+  inp?: Obj<string>,
   
   // Process data line-by-line; return strings to send them to the child process' stdout!
   onData?: (type: 'init' | 'line', data: string) => Promise<null | string>
@@ -29,18 +29,26 @@ export type ProcOpts = {
 export default (cmd: string, opts?: ProcOpts): RunInShellReturnValue => {
 
   // Note that `timeoutMs` counts since the most recent chunk
-  const { cwd=rootFact, timeoutMs=30 * 1000, bufferOutput=true, env=process.env, args={}, onData=null } = opts ?? {};
+  const {
+    cwd          = rootFact,
+    timeoutMs    = 30 * 1000,
+    bufferOutput = true,
+    env          = process.env,
+    inp          = {},
+    onData       = null
+  } = opts ?? {};
   const err = Error('');
   
   const reg = /[^'"\s]+|"[^"]*"|'[^']*'/g;
   const [ shellName, ...shellArgs ] = cmd.match(reg)![map](v => v.trim() || skip).map(v => {
     
     // Resolve referenced content (uses "{{" and "}}")
-    if (v[hasHead]('{{') && !v[hasTail]('}}')) {
+    if (v[hasHead]('{{') && v[hasTail]('}}')) {
       
+      // TODO: Quote the value, if it needs it?
       const key = v.slice('{{'.length, -'}}'.length);
-      if (!args[has](key)) throw Error('Arg missing')[mod]({ key });
-      return args[key];
+      if (!inp[has](key)) throw Error('Arg missing')[mod]({ key });
+      return inp[key];
       
     }
     
@@ -54,6 +62,7 @@ export default (cmd: string, opts?: ProcOpts): RunInShellReturnValue => {
     lastChunk: null as null | Buffer,
     timeout:   null as any
   };
+  
   const proc = spawn(shellName, shellArgs, {
     windowsHide: true,
     shell: true,
@@ -70,7 +79,7 @@ export default (cmd: string, opts?: ProcOpts): RunInShellReturnValue => {
     proc.kill();
     proc.emit('error', Error('timeout')[mod]({ timeoutMs, lastChunk: stripAnsi(state.lastChunk?.toString('utf8') ?? '') }))
   };
-  const resetTimeout = timeoutMs
+  const resetTimeout = (timeoutMs && timeoutMs !== Infinity)
     ? () => { clearTimeout(state.timeout); state.timeout = setTimeout(timeoutFn, timeoutMs); }
     : () => { /* infinite timeout */ };
   resetTimeout();
